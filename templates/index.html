@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>企业微信通讯录管理工具 (Pro)</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+    <style>
+        body { background-color: #f0f2f5; }
+        .main-container { display: flex; height: calc(100vh - 150px); gap: 1.5rem; }
+        .sidebar { flex: 0 0 320px; background: #fff; padding: 1rem; overflow-y: auto; }
+        .content { flex: 1; background: #fff; padding: 1.5rem; overflow-y: auto; display: flex; flex-direction: column; }
+        .table-container { flex-grow: 1; }
+        .toast-container { z-index: 1100; }
+        .org-tree .list-group-item { border: none; padding: 0; }
+        .org-tree .department-link { display: flex; align-items: center; justify-content: space-between; text-decoration: none; border-radius: 0.25rem; }
+        .org-tree .department-link > a { flex-grow: 1; padding: 0.5rem 1rem; text-decoration: none; display: block; }
+        .org-tree .list-group { margin-left: 1.5rem; border-left: 1px solid #eee; }
+        .org-tree .toggler-icon { cursor: pointer; transition: transform 0.2s ease-in-out; padding: 0.5rem 1rem; color: #6c757d; }
+        .org-tree .toggler-icon.collapsed { transform: rotate(-90deg); }
+        .org-tree ul { display: block; }
+        .org-tree ul.collapsed { display: none; }
+        tr[draggable="true"] { cursor: grab; }
+        .department-link.drag-over { background-color: #d8e6ff; border: 1px dashed #0d6efd; }
+    </style>
+</head>
+<body>
+    <div class="toast-container position-fixed top-0 end-0 p-3"></div>
+    <div class="container-fluid p-4">
+        <div id="credentials-section" class="row justify-content-center">
+            <div class="col-lg-5">
+                <div class="card shadow-sm">
+                    <div class="card-header bg-primary text-white"><h4 class="mb-0"><i class="bi bi-key-fill me-2"></i>连接到企业微信</h4></div>
+                    <div class="card-body p-4">
+                        <form id="connect-form">
+                            <div class="mb-3"><label for="corp_id" class="form-label">企业ID</label><input type="text" class="form-control" id="corp_id" required></div>
+                            <div class="mb-3"><label for="app_secret" class="form-label">应用Secret (读取)</label><input type="password" class="form-control" id="app_secret" required></div>
+                            <div class="mb-3"><label for="txl_secret" class="form-label">通讯录Secret (写入)</label><input type="password" class="form-control" id="txl_secret" required></div>
+                            <button type="submit" class="btn btn-primary w-100 btn-lg mt-2"><span id="connect-spinner" class="spinner-border spinner-border-sm me-2" style="display: none;"></span>连接</button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div id="main-app" style="display: none;">
+            <header class="d-flex justify-content-between align-items-center mb-4 pb-3 border-bottom">
+                <h3 class="mb-0 text-primary"><i class="bi bi-diagram-3-fill me-2"></i>通讯录管理</h3>
+                <button id="disconnect-btn" class="btn btn-outline-danger"><i class="bi bi-x-circle me-2"></i>断开连接</button>
+            </header>
+            <div class="main-container">
+                <aside class="sidebar card shadow-sm">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <h5 class="mb-0"><i class="bi bi-building me-2"></i>组织架构</h5>
+                        <div>
+                            <button id="expand-all-btn" class="btn btn-sm btn-outline-secondary" title="全部展开"><i class="bi bi-arrows-expand"></i></button>
+                            <button id="collapse-all-btn" class="btn btn-sm btn-outline-secondary" title="全部折叠"><i class="bi bi-arrows-collapse"></i></button>
+                        </div>
+                    </div>
+                    <div id="org-tree" class="org-tree list-group list-group-flush"></div>
+                </aside>
+                <main class="content card shadow-sm">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <h5 id="current-dept-name" class="mb-0"></h5>
+                        <button class="btn btn-success" data-bs-toggle="modal" data-bs-target="#userModal" id="add-user-btn"><i class="bi bi-plus-circle me-2"></i>新增用户</button>
+                    </div>
+                    <div class="table-container table-responsive">
+                        <table class="table table-hover align-middle">
+                            <thead class="table-light"><tr><th>姓名</th><th>UserID</th><th>职位</th><th class="text-end">操作</th></tr></thead>
+                            <tbody id="user-table-body"></tbody>
+                        </table>
+                    </div>
+                    <nav id="pagination-nav" class="mt-auto pt-3" aria-label="用户列表分页">
+                        <ul class="pagination justify-content-end mb-0"></ul>
+                    </nav>
+                </main>
+            </div>
+        </div>
+    </div>
+    <div class="modal fade" id="userModal" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered"><div class="modal-content"><form id="user-form"><div class="modal-header"><h5 class="modal-title" id="modal-title"></h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><div class="modal-body"><input type="hidden" name="original_userid"><div class="mb-3"><label class="form-label">UserID (唯一标识)</label><input type="text" class="form-control" name="userid" required></div><div class="mb-3"><label class="form-label">姓名</label><input type="text" class="form-control" name="name" required></div><div class="mb-3"><label class="form-label">手机号</label><input type="tel" class="form-control" name="mobile" placeholder="留空则不修改"></div><div class="mb-3"><label class="form-label">邮箱 (选填)</label><input type="email" class="form-control" name="email" placeholder="留空则不修改"></div><div class="mb-3"><label class="form-label">部门ID (多个用,隔开)</label><input type="text" class="form-control" name="department" required></div><div class="mb-3"><label class="form-label">职位</label><input type="text" class="form-control" name="position"></div></div><div class="modal-footer"><button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button><button type="submit" class="btn btn-primary"><i class="bi bi-check-circle me-2"></i>保存</button></div></form></div></div>
+    </div>
+    <div class="modal fade" id="deleteConfirmModal" tabindex="-1">
+         <div class="modal-dialog modal-dialog-centered"><div class="modal-content"><div class="modal-header"><h5 class="modal-title"><i class="bi bi-exclamation-triangle-fill text-danger me-2"></i>确认删除</h5></div><div class="modal-body"><p>确定删除用户 <strong id="delete-user-name"></strong>？此操作不可恢复！</p></div><div class="modal-footer"><button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button><button type="button" class="btn btn-danger" id="confirm-delete-btn">确认删除</button></div></div></div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+    document.addEventListener('DOMContentLoaded', function () {
+        let currentDeptId = 1, departments = [], currentPage = 1, totalUsers = 0;
+        const usersPerPage = 15;
+        const userModal = new bootstrap.Modal(document.getElementById('userModal')), deleteModal = new bootstrap.Modal(document.getElementById('deleteConfirmModal'));
+        const connectForm = document.getElementById('connect-form'), mainApp = document.getElementById('main-app'), credentialsSection = document.getElementById('credentials-section');
+        const orgTree = document.getElementById('org-tree'), userTableBody = document.getElementById('user-table-body'), paginationContainer = document.querySelector('#pagination-nav .pagination');
+        
+        connectForm.addEventListener('submit', handleConnect);
+        document.getElementById('disconnect-btn').addEventListener('click', handleDisconnect);
+        orgTree.addEventListener('click', handleDeptClick);
+        orgTree.addEventListener('click', handleToggle);
+        document.getElementById('expand-all-btn').addEventListener('click', () => toggleAll(false));
+        document.getElementById('collapse-all-btn').addEventListener('click', () => toggleAll(true));
+        userTableBody.addEventListener('click', handleUserAction);
+        document.getElementById('user-form').addEventListener('submit', handleUserFormSubmit);
+        document.getElementById('confirm-delete-btn').addEventListener('click', confirmDeleteUser);
+        document.getElementById('add-user-btn').addEventListener('click', openAddUserModal);
+        paginationContainer.addEventListener('click', handlePaginationClick);
+        userTableBody.addEventListener('dragstart', handleDragStart);
+        orgTree.addEventListener('dragover', handleDragOver);
+        orgTree.addEventListener('dragleave', handleDragLeave);
+        orgTree.addEventListener('drop', handleDrop);
+
+        function buildOrgTree(depts, parentId) {
+            const children = depts.filter(d => d.parentid === parentId);
+            if (children.length === 0) return '';
+            let html = '<ul class="list-group list-group-flush">';
+            children.sort((a,b) => (a.order || 0) - (b.order || 0)).forEach(dept => {
+                const hasChildren = depts.some(d => d.parentid === dept.id);
+                const togglerHtml = hasChildren ? `<i class="bi bi-caret-down-fill toggler-icon"></i>` : `<span class="toggler-icon" style="width: 1.5em;"></span>`;
+                html += `<li class="list-group-item"><div class="department-link"><a href="#" data-dept-id="${dept.id}" data-dept-name="${dept.name}"><i class="bi bi-folder me-2"></i>${dept.name}</a>${togglerHtml}</div>${buildOrgTree(depts, dept.id)}</li>`;
+            });
+            return html + '</ul>';
+        }
+
+        async function handleConnect(e) {
+            e.preventDefault();
+            const spinner = document.getElementById('connect-spinner');
+            spinner.style.display = 'inline-block';
+            const payload = {corp_id: document.getElementById('corp_id').value, app_secret: document.getElementById('app_secret').value, txl_secret: document.getElementById('txl_secret').value};
+            const response = await apiCall('/api/connect', 'POST', payload);
+            if (response.success) {
+                credentialsSection.style.display = 'none';
+                mainApp.style.display = 'block';
+                departments = response.departments;
+                const hasChildren = departments.some(d => d.parentid === 1);
+                const togglerHtml = hasChildren ? `<i class="bi bi-caret-down-fill toggler-icon"></i>` : `<span class="toggler-icon" style="width: 1.5em;"></span>`;
+                orgTree.innerHTML = `<div class="list-group-item"><div class="department-link"><a href="#" class="active" data-dept-id="1" data-dept-name="根部门"><i class="bi bi-building me-2"></i>根部门</a>${togglerHtml}</div>${buildOrgTree(departments, 1)}</div>`;
+                currentPage = 1;
+                const paginatedResponse = await apiCall(`/api/users/1?page=1&limit=${usersPerPage}`);
+                if(paginatedResponse.success) {
+                    totalUsers = paginatedResponse.total;
+                    renderUserTable(paginatedResponse.users);
+                    renderPagination();
+                }
+                updateActiveDept(1, '根部门');
+            }
+            spinner.style.display = 'none';
+        }
+
+        function handleDisconnect() { mainApp.style.display = 'none'; credentialsSection.style.display = 'block'; }
+        function handleToggle(e) { if (e.target.classList.contains('toggler-icon')) { const sublist = e.target.parentElement.nextElementSibling; if (sublist && sublist.tagName === 'UL') { e.target.classList.toggle('collapsed'); sublist.classList.toggle('collapsed'); } } }
+        
+        function handleDeptClick(e) {
+            const link = e.target.closest('a');
+            if (link && link.parentElement.classList.contains('department-link')) { e.preventDefault(); const deptId = link.dataset.deptId, deptName = link.dataset.deptName; updateActiveDept(deptId, deptName); currentPage = 1; fetchAndRenderUsers(deptId, currentPage); }
+        }
+
+        async function fetchAndRenderUsers(deptId, page) {
+            const response = await apiCall(`/api/users/${deptId}?page=${page}&limit=${usersPerPage}`);
+            if (response.success) { totalUsers = response.total; renderUserTable(response.users); renderPagination(); updateActiveDept(deptId, document.querySelector(`.department-link a[data-dept-id='${deptId}']`).dataset.deptName); }
+        }
+
+        function updateActiveDept(deptId, deptName) {
+            currentDeptId = deptId;
+            document.querySelectorAll('.department-link a').forEach(a => a.classList.remove('active'));
+            const activeLink = document.querySelector(`.department-link a[data-dept-id='${deptId}']`);
+            if (activeLink) activeLink.classList.add('active');
+            document.getElementById('current-dept-name').textContent = `${deptName} - 用户列表 (${totalUsers}人)`;
+        }
+
+        function renderUserTable(users) {
+            userTableBody.innerHTML = '';
+            if (!users || users.length === 0) { userTableBody.innerHTML = '<tr><td colspan="4" class="text-center text-muted p-4">该部门下无成员</td></tr>'; return; }
+            users.forEach(user => {
+                const row = `<tr draggable="true" data-userid="${user.userid}" data-username="${user.name}"><td><strong>${user.name}</strong></td><td class="text-muted">${user.userid}</td><td>${user.position || 'N/A'}</td><td class="text-end"><button class="btn btn-sm btn-outline-primary edit-btn" title="编辑" data-userid="${user.userid}"><i class="bi bi-pencil"></i></button><button class="btn btn-sm btn-outline-danger delete-btn" title="删除" data-userid="${user.userid}" data-username="${user.name}"><i class="bi bi-trash"></i></button></td></tr>`;
+                userTableBody.insertAdjacentHTML('beforeend', row);
+            });
+        }
+        
+        function renderPagination() {
+            paginationContainer.innerHTML = '';
+            const totalPages = Math.ceil(totalUsers / usersPerPage);
+            if (totalPages <= 1) return;
+            let paginationHtml = `<li class="page-item ${currentPage === 1 ? 'disabled' : ''}"><a class="page-link" href="#" data-page="${currentPage - 1}">&laquo;</a></li>`;
+            let startPage = Math.max(1, currentPage - 2), endPage = Math.min(totalPages, currentPage + 2);
+            if (startPage > 1) paginationHtml += `<li class="page-item"><a class="page-link" href="#" data-page="1">1</a></li><li class="page-item disabled"><span class="page-link">...</span></li>`;
+            for (let i = startPage; i <= endPage; i++) paginationHtml += `<li class="page-item ${i === currentPage ? 'active' : ''}"><a class="page-link" href="#" data-page="${i}">${i}</a></li>`;
+            if (endPage < totalPages) paginationHtml += `<li class="page-item disabled"><span class="page-link">...</span></li><li class="page-item"><a class="page-link" href="#" data-page="${totalPages}">${totalPages}</a></li>`;
+            paginationHtml += `<li class="page-item ${currentPage === totalPages ? 'disabled' : ''}"><a class="page-link" href="#" data-page="${currentPage + 1}">&raquo;</a></li>`;
+            paginationContainer.innerHTML = paginationHtml;
+        }
+
+        function handlePaginationClick(e) {
+            e.preventDefault();
+            const target = e.target.closest('a');
+            if (target && !target.parentElement.classList.contains('disabled')) { const page = parseInt(target.dataset.page); if (page !== currentPage) { currentPage = page; fetchAndRenderUsers(currentDeptId, currentPage); } }
+        }
+
+        function handleDragStart(e) { const tr = e.target.closest('tr'); if (tr) { e.dataTransfer.setData('text/plain', tr.dataset.userid); e.dataTransfer.setData('username', tr.dataset.username); e.dataTransfer.effectAllowed = 'move'; } }
+        function handleDragOver(e) { e.preventDefault(); const dropTarget = e.target.closest('.department-link'); if (dropTarget) dropTarget.classList.add('drag-over'); }
+        function handleDragLeave(e) { const dropTarget = e.target.closest('.department-link'); if (dropTarget) dropTarget.classList.remove('drag-over'); }
+        async function handleDrop(e) {
+            e.preventDefault();
+            const dropTarget = e.target.closest('.department-link');
+            if (dropTarget) {
+                dropTarget.classList.remove('drag-over');
+                const userId = e.dataTransfer.getData('text/plain'), userName = e.dataTransfer.getData('username');
+                const targetDeptId = parseInt(dropTarget.querySelector('a').dataset.deptId), targetDeptName = dropTarget.querySelector('a').dataset.deptName;
+                if (confirm(`确定要将用户【${userName}】移动到【${targetDeptName}】部门吗？\n(此操作会覆盖用户原有的部门设置)`)) {
+                    const payload = { userid: userId, department: [targetDeptId] };
+                    const response = await apiCall('/api/user', 'PUT', payload, true);
+                    if (response.success) { showToast(`用户 ${userName} 已成功移动到 ${targetDeptName}！`, 'success'); fetchAndRenderUsers(currentDeptId, currentPage); } 
+                    else { showToast(`移动失败: ${response.error}`, 'danger'); }
+                }
+            }
+        }
+
+        function handleUserAction(e) { const target = e.target.closest('button'); if (!target) return; const userid = target.dataset.userid; if (target.classList.contains('edit-btn')) openEditUserModal(userid); if (target.classList.contains('delete-btn')) openDeleteConfirmModal(userid, target.dataset.username); }
+        function openAddUserModal() { const form = document.getElementById('user-form'); form.reset(); form.querySelector('[name="userid"]').readOnly = false; form.querySelector('[name="original_userid"]').value = ''; form.querySelector('[name="department"]').value = currentDeptId; document.getElementById('modal-title').innerHTML = '<i class="bi bi-plus-circle me-2"></i>新增用户'; }
+        async function openEditUserModal(userid) {
+            const response = await apiCall(`/api/user/${userid}`); if (!response.success) return; const user = response.user; const form = document.getElementById('user-form'); form.reset();
+            form.querySelector('[name="userid"]').value = user.userid; form.querySelector('[name="userid"]').readOnly = true; form.querySelector('[name="original_userid"]').value = user.userid;
+            form.querySelector('[name="name"]').value = user.name; form.querySelector('[name="mobile"]').value = user.mobile || ''; form.querySelector('[name="email"]').value = user.email || '';
+            form.querySelector('[name="department"]').value = user.department.join(', '); form.querySelector('[name="position"]').value = user.position || '';
+            document.getElementById('modal-title').innerHTML = `<i class="bi bi-pencil-square me-2"></i>编辑用户: ${user.name}`; userModal.show();
+        }
+        async function handleUserFormSubmit(e) {
+            e.preventDefault();
+            const form = e.target, formData = new FormData(form);
+            const originalUserid = formData.get('original_userid'), method = originalUserid ? 'PUT' : 'POST', actionText = originalUserid ? '更新' : '新增';
+            const payload = { userid: formData.get('userid'), name: formData.get('name'), mobile: formData.get('mobile'), email: formData.get('email'), department: formData.get('department').split(',').map(id => parseInt(id.trim())).filter(Boolean), position: formData.get('position') };
+            const response = await apiCall('/api/user', method, payload, true);
+            if (response.success) { showToast(`用户 ${actionText} 成功！`, 'success'); userModal.hide(); fetchAndRenderUsers(currentDeptId, currentPage); } 
+            else { showToast(`用户 ${actionText} 失败: ${response.error}`, 'danger'); }
+        }
+        function openDeleteConfirmModal(userid, username) { document.getElementById('delete-user-name').textContent = username; document.getElementById('confirm-delete-btn').dataset.userid = userid; deleteModal.show(); }
+        async function confirmDeleteUser(e) {
+            const userid = e.target.dataset.userid;
+            const response = await apiCall('/api/user', 'DELETE', { userid }, true);
+            if (response.success) { showToast(`用户 ${userid} 删除成功！`, 'success'); deleteModal.hide(); fetchAndRenderUsers(currentDeptId, currentPage); } 
+            else { showToast(`用户删除失败: ${response.error}`, 'danger'); }
+        }
+        function toggleAll(collapse) { orgTree.querySelectorAll('.toggler-icon').forEach(icon => icon.classList.toggle('collapsed', collapse)); orgTree.querySelectorAll('ul').forEach(ul => ul.classList.toggle('collapsed', collapse)); }
+        function showToast(message, type = 'info') {
+            const toastContainer = document.querySelector('.toast-container');
+            const toastId = 'toast-' + Date.now(), toastIcon = {success: '<i class="bi bi-check-circle-fill me-2"></i>', danger: '<i class="bi bi-exclamation-triangle-fill me-2"></i>', info: '<i class="bi bi-info-circle-fill me-2"></i>'}[type];
+            const toastHtml = `<div id="${toastId}" class="toast align-items-center text-bg-${type} border-0" role="alert" aria-live="assertive" aria-atomic="true"><div class="d-flex"><div class="toast-body">${toastIcon} ${message}</div><button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button></div></div>`;
+            const toastEl = document.getElementById(toastId);
+            const toast = new bootstrap.Toast(toastEl, { delay: 3000 }); toast.show();
+            toastEl.addEventListener('hidden.bs.toast', () => toastEl.remove());
+        }
+        async function apiCall(endpoint, method = 'GET', body = null, silent = false) {
+            try {
+                const options = { method, headers: {'Content-Type': 'application/json'} };
+                if (body) options.body = JSON.stringify(body);
+                const response = await fetch(endpoint, options);
+                const result = await response.json();
+                if (!result.success && !silent) { showToast(`操作失败: ${result.error}`, 'danger'); }
+                return result;
+            } catch (err) {
+                if (!silent) { showToast(`请求错误: ${err.message}`, 'danger'); }
+                return { success: false, error: err.message };
+            }
+        }
+    });
+    </script>
+</body>
+</html>
